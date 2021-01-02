@@ -1,0 +1,22 @@
+.verse {
+  font-weight 			: bold;
+  width 				: 8%;
+  padding-right 		: 10px;
+  text-align    		: right;
+  font-size     		: 14pt;
+  vertical-align 		: top;
+  background     		: #DDF;
+  #border-left         	: solid 1px #00F;
+  #border-top         	: solid 1px #00F;
+  #border-bottom        : solid 1px #00F;
+}
+
+.text {
+  font-size		 		: 14pt;
+  background            : #008;
+  color                 : #FFF;
+}
+
+body {
+  background    		: #008;
+}

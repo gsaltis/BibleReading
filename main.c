@@ -28,23 +28,23 @@
 #define DATABASE_FILENAME               "bible-sqlite.db"
 #define VERSES_BY_BOOK_QUERY_STRING             \
   "SELECT books.name, c, COUNT(v), b "          \
-  "FROM t_asv "                                 \
+  "FROM t_%s "                                  \
   "JOIN books ON b == books.canonical "         \
   "GROUP BY b, c "                              \
-  "ORDER BY books.chronological, c;"
+  "ORDER BY books.%s, c;"
 
 #define VERSES_QUERY_STRING                     \
   "SELECT books.name, c, v, b "                 \
-  "FROM t_asv "                                 \
+  "FROM t_%s "                                  \
   "JOIN books ON b == books.canonical "         \
-  "ORDER BY books.chronological, c;"
+  "ORDER BY books.%s, c;"
 
 #define VERSE_QUERY_RANGE                       \
   "SELECT books.name, c, v, b, t "              \
-  "FROM t_asv "                                 \
+  "FROM t_%s "                                  \
   "JOIN books ON b == books.canonical "         \
   "WHERE id >= %d AND id <= %d "                \
-  "ORDER BY books.chronological, c;"            \
+  "ORDER BY books.%s, c;"                       \
   
 #define SECONDS_IN_DAY                  86400
 
@@ -115,6 +115,27 @@ mainUserStartDate = NULL;
 
 string
 mainUserReadingDate = NULL;
+
+char
+mainVerseQueryString[1024];
+
+char
+mainVersesQueryRange[1024];
+
+char
+mainVersesByBookQueryString[1024];
+
+string
+mainBookSortOrder = NULL;
+
+string
+mainBookSortOrderDefault = "chronological";
+
+string
+mainBibleVersion = NULL;
+
+string
+mainBibleVersionDefault = "asv";
 
 /*****************************************************************************!
  * Local Functions
@@ -238,10 +259,13 @@ GetTotalVersesCount()
   string                                bookname;
   int                                   totalVerses = 0;
   sqlite3_stmt*                         statement;
-  string                                selectString = VERSES_BY_BOOK_QUERY_STRING;
+  string                                selectString;
   ChapterCount*                         bookChapter;
   ChapterCount*                         last = NULL;
-  
+ 
+  sprintf(mainVersesByBookQueryString, VERSES_BY_BOOK_QUERY_STRING, mainBibleVersion, mainBookSortOrder);
+  selectString = mainVersesByBookQueryString;
+
   if ( SQLITE_OK != sqlite3_prepare_v2(mainDatabase, selectString, strlen(selectString), &statement, NULL) ) {
     return 0 ;
 
@@ -320,7 +344,10 @@ CreateReadingSchedule
   string                                selectString = VERSES_QUERY_STRING;
   int                                   days;
   time_t                                secs;
-  
+ 
+  sprintf(mainVerseQueryString, VERSES_QUERY_STRING, mainBibleVersion, mainBookSortOrder);
+  selectString = mainVerseQueryString;
+
   days = (mainToday / SECONDS_IN_DAY) + 1;
   secs = (days) * SECONDS_IN_DAY;
   
@@ -452,6 +479,8 @@ void
 Initialize
 ()
 {
+  mainBibleVersion = StringCopy(mainBibleVersionDefault);
+  mainBookSortOrder = StringCopy(mainBookSortOrderDefault);
   mainReadToday = false;
   mainDisplayReadingSchedule = false;
   mainUserStartDate = NULL;
@@ -488,7 +517,22 @@ ProcessCommandLine
       mainUserStartDate = StringCopy(argv[i]);
       continue;
     }
-    if ( StringEqualsOneOf(command, "-d", "--date", NULL ) ) {
+
+    if ( StringEqualsOneOf(command, "-b", "--bibleversion", NULL ) ) {
+      i++;
+      if ( i + 1 == argc ) {
+        fprintf(stderr, "%s requires a version\n", command);
+        DisplayHelp();
+        exit(EXIT_FAILURE);
+      }
+      if ( mainBibleVersion ) {
+        FreeMemory(mainBibleVersion);
+      }
+      mainBibleVersion = StringCopy(argv[i]);
+      continue;
+    }
+
+        if ( StringEqualsOneOf(command, "-d", "--date", NULL ) ) {
       i++;
       if ( i + 1 == argc ) {
         fprintf(stderr, "%s requires a date\n", command);
@@ -551,6 +595,8 @@ DisplayHelp
   fprintf(stdout, "%*s-d, --date MM/DD/YYYY      : Define the date for which the scripture is to be read\n", n, " ");
   fprintf(stdout, "%*s-h, --help                 : Display this information\n", n, " ");
   fprintf(stdout, "%*s-r, --read                 : Read today's scripture\n", n, " ");
+  fprintf(stdout, "%*s-s, --sort can chron       : Sort in either canonical or chronological order (default chronological\n", n, " ");
+  fprintf(stdout, "%*s-b, --bibleversion         : Bible version (default asv)\n", n, " ");
   fprintf(stdout, "%*s-s, --schedule             : Read reading schedule\n", n, " ");
 }
 
@@ -561,16 +607,15 @@ void
 ReadTodaysVerses
 ()
 {
-  string                                s2;
   time_t                                startDate, todaysDate;
   int                                   elapsedDays;
   ReadScheduleEntry*                    entry;
   int                                   startid, endid;
   sqlite3_stmt*                         statement;
-  string                                selectString = VERSE_QUERY_RANGE;
   string                                bookName, text;
   int                                   chapter, verse;
   FILE*                                 outFile;
+  struct tm*                            d;
   
   todaysDate = GetReadingDate();
   startDate = GetStartDate();
@@ -587,10 +632,8 @@ ReadTodaysVerses
     entry->endChapter * 1000 +
     entry->endVerse;
 
-  s2 = (string)GetMemory(strlen(selectString) + 24);
-  sprintf(s2, selectString, startid, endid);
-
-  if ( SQLITE_OK != sqlite3_prepare_v2(mainDatabase, s2, strlen(s2), &statement, NULL) ) {
+  sprintf(mainVersesQueryRange, VERSE_QUERY_RANGE, mainBibleVersion, startid, endid, mainBookSortOrder);
+  if ( SQLITE_OK != sqlite3_prepare_v2(mainDatabase, mainVersesQueryRange, strlen(mainVersesQueryRange), &statement, NULL) ) {
     return;
   }
 
@@ -599,12 +642,15 @@ ReadTodaysVerses
     return ;
   }
 
+  d = localtime(&todaysDate);
   outFile = fopen("today.html", "wb");
   fprintf(outFile, "<HTML>\n");
   fprintf(outFile, "<HEAD>\n");
   fprintf(outFile, "  <LINK href=\"style.css\" type=\"text/css\" rel=\"stylesheet\"></LINK>\n");
   fprintf(outFile, "</HEAD>\n");
   fprintf(outFile, "<BODY>\n");
+  fprintf(outFile, "  <A class=\"DateDisplay\">");
+  fprintf(outFile, "%s %d %d</A>\n", mainMonthNames[d->tm_mon], d->tm_mday, 1900 + d->tm_year);
   fprintf(outFile, "<TABLE>\n");
   do {
     bookName = (string)sqlite3_column_text(statement, 0);
